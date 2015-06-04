@@ -66,10 +66,36 @@ makepackages(Options) ->
 
     print_debs(AllPackages),
 
-    lists:foreach(fun build_deb/1, AllPackages).
+    J = 2,
+
+    %% build deps + erts pkg in parallel, then the other two
+    DebPartitions = partition(ErtsPackages ++ DepPackages, J) ++
+                    [MetaPackage] ++ [ReleasePackage],
+
+    Ret = lists:flatten(lists:map(fun(Part) ->
+        %io:format("build_deb: ~p\n",[Part]),
+        pkgx_pmap:pmap(fun build_deb/1, Part)
+    end, DebPartitions)),
+
+    io:format("Done building in parallel: ~p\n",[Ret]).
 
 build_deb(#deb{vars=Vars, path=OutputPath}) ->
     pkgx_target_deb:run(Vars, OutputPath).
+
+
+% partition list into list of smaller lists, of max Size
+partition(L, Size) when is_list(L), is_integer(Size) ->
+    case length(L) =< Size of
+        true -> [L];
+        false ->
+            partition(L, Size, [])
+    end.
+partition(L, Size, Acc) when length(L) =< Size ->
+    [L|Acc];
+partition(L, Size, Acc) ->
+    {Part, Rest} = lists:split(Size, L),
+    partition(Rest, Size, [Part|Acc]).
+
 
 print_debs([]) ->
     io:format("Nothing to package.\n");

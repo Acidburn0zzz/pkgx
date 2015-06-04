@@ -9,7 +9,8 @@ run(Vars, Target) ->
     DebFiles = filelib:wildcard(PackageName ++ "_" ++ Version ++ "-*.{deb,changes,build}", Target),
     case length(DebFiles) == 3 of
         true ->
-            io:format(user, "Skipping ~p, version ~p is already packaged~n", [PackageName, Version]);
+            io:format(user, "Skipping ~p, version ~p is already packaged~n", [PackageName, Version]),
+            {ok, Vars};
         false ->
             io:format(user, "Building ~p, version ~p. Output: ~p~n", [PackageName, Version, Target]),
             make_package(Vars, Target)
@@ -70,10 +71,13 @@ make_package(Vars, Target) ->
         {0, _} ->
             Parent = filename:absname(filename:dirname(Basedir)),
             movefiles(filelib:wildcard(Parent ++ "/*.{deb,build,changes}"), Target),
-            ok;
+            {ok, Vars};
         {ExitCode, Error} ->
             io:format(standard_error, "Failed to build package:~n~s", [Error]),
-            halt(ExitCode)
+            {error, [{exitcode, ExitCode},
+                     {error, Error},
+                     {vars, Vars},
+                     {target, Target}]}
     end.
 
 
