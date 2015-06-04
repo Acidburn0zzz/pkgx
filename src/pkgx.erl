@@ -1,6 +1,8 @@
 -module(pkgx).
 -export([main/1]).
 
+-record(deb, {vars, path}).
+
 main(CmdLine) ->
     OptSpecList = option_spec_list(),
 
@@ -52,16 +54,32 @@ makepackages(Options) ->
     OutputPath = proplists:get_value(output, Options) ++ "/",
     file:make_dir(OutputPath),
 
-    InstallPrefix = InstallLocation ++  "/lib",
-    make_dep_packages(Options, AppName, Deps, ParentDeps, InstallPrefix, OutputPath),
+    InstallPrefix   = InstallLocation ++  "/lib",
+    ErtsDep         = [{erts, ErtsVsn, "erts-" ++ ErtsVsn}],
+    DepPackages     = make_dep_packages(Options, AppName, Deps,    ParentDeps, InstallPrefix, OutputPath, []),
+    ErtsPackages    = make_dep_packages(Options, AppName, ErtsDep, ParentDeps, InstallLocation, OutputPath, []),
 
-    ErtsDep = [{erts, ErtsVsn, "erts-" ++ ErtsVsn}],
-    make_dep_packages(Options, AppName, ErtsDep, ParentDeps, InstallLocation, OutputPath),
+    ReleasePackage  = make_release_package(Options, AppName, ReleaseVsn, ParentReleaseVsn, ErtsVsn, Deps ++ ErtsDep, ParentDeps, InstallLocation, OutputPath),
+    MetaPackage     = make_meta_package(Options, AppName, ReleaseVsn, ParentReleaseVsn, Deps ++ ErtsDep, ParentDeps, InstallLocation, OutputPath),
 
-    make_release_package(Options, AppName, ReleaseVsn, ParentReleaseVsn, ErtsVsn, Deps ++ ErtsDep, ParentDeps, InstallLocation, OutputPath),
+    AllPackages = [MetaPackage, ReleasePackage] ++ DepPackages ++ ErtsPackages,
 
-    make_meta_package(Options, AppName, ReleaseVsn, ParentReleaseVsn, Deps ++ ErtsDep, ParentDeps, InstallLocation, OutputPath).
+    print_debs(AllPackages),
 
+    lists:foreach(fun build_deb/1, AllPackages).
+
+build_deb(#deb{vars=Vars, path=OutputPath}) ->
+    pkgx_target_deb:run(Vars, OutputPath).
+
+print_debs([]) ->
+    io:format("Nothing to package.\n");
+print_debs(Debs) when is_list(Debs) ->
+    lists:foreach(fun(#deb{vars=Vars}) ->
+        io:format("* ~s-~s\n", [
+                    proplists:get_value(app, Vars),
+                    proplists:get_value(dep_version, Vars)
+        ])
+    end, Debs).
 
 get_versions_to_replace(Releases) when length(Releases) > 2 ->
     {ParentVsn,_,ParentErtsVsn,ParentDeps} = lists:nth(2, Releases),
@@ -99,7 +117,9 @@ dep_to_packagename(AppName, DepNameList, DepVersion) ->
     AppName ++ "-" ++ CompatDepName ++ "-" ++ DepVersion.
 
 
-make_dep_packages(BaseVars, AppName, [Dep|Deps], ParentDeps, InstallPrefix, OutputPath) ->
+make_dep_packages(_BaseVars, _AppName, [], _ParentDeps, _InstallPrefix, _OutputPath, Acc) ->
+    Acc;
+make_dep_packages(BaseVars, AppName, [Dep|Deps], ParentDeps, InstallPrefix, OutputPath, Acc) ->
     {DepName, DepVersion, DepPath} = Dep,
     DepNameList = atom_to_list(DepName),
     PackageName = dep_to_packagename(AppName, DepNameList, DepVersion),
@@ -138,12 +158,8 @@ make_dep_packages(BaseVars, AppName, [Dep|Deps], ParentDeps, InstallPrefix, Outp
         {parent_version, "1"},
         {extra_templates, ExtraTemplates}
     ],
-
-    pkgx_target_deb:run(Vars, OutputPath),
-    make_dep_packages(BaseVars, AppName, Deps, ParentDeps, InstallPrefix, OutputPath);
-
-make_dep_packages(_BaseVars, _AppName, [], _ParentDeps, _InstallPrefix, _OutputPath) ->
-    ok.
+    Deb = #deb{vars=Vars, path=OutputPath},
+    make_dep_packages(BaseVars, AppName, Deps, ParentDeps, InstallPrefix, OutputPath, [Deb|Acc]).
 
 get_package_name(AppName, {DepName, DepVersion, _}) ->
     get_package_name(AppName, {DepName, DepVersion});
@@ -202,8 +218,7 @@ make_release_package(BaseVars, AppName, Version, OldVersion, ErtsVsn, Deps, _Par
             {AppName ++ "_upgrade", upgrade_command_dtl, 8#755}
         ] ++ ExtraTemplates}
     ],
-
-    pkgx_target_deb:run(Vars, OutputPath).
+    #deb{vars=Vars, path=OutputPath}.
 
 
 make_meta_package(BaseVars, AppName, Version, OldVersion, _Deps, _ParentDeps, InstallLocation, OutputPath) ->
@@ -256,4 +271,4 @@ make_meta_package(BaseVars, AppName, Version, OldVersion, _Deps, _ParentDeps, In
         ]}
     ],
 
-    pkgx_target_deb:run(Vars, OutputPath).
+    #deb{vars=Vars, path=OutputPath}.
